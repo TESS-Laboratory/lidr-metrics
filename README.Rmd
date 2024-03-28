@@ -1,0 +1,97 @@
+---
+output: github_document
+---
+# generating LiDAR metrics with the lidR package.
+
+The code used in these examples is taken from the following publication: 
+
+Michael J Mahoney, Lucas K Johnson, Eddie Bevilacqua & Colin M Beier
+(2022) Filtering ground noise from LiDAR returns produces inferior models of
+forest aboveground biomass in heterogenous landscapes, GIScience & Remote
+Sensing, 59:1, 1266-1280, DOI: 10.1080/15481603.2022.2103069
+
+## Example:
+
+First, we load the required libraries and the source functions. The 
+`lidar-metrics.R` file contains the functions that are used to generate the 
+metrics. 
+```{r}
+suppressPackageStartupMessages({
+  library(lidR)
+  library(proceduralnames) # used in the source functions.
+  library(terra)
+  library(sf)
+})
+
+source("lidar-metrics.R")
+```
+
+Then we load up some example data and of a point cloud of trees and create some
+fake plots to extract metrics from.
+```{r}
+# load an example dataset from the lidR package
+LASfile <- system.file("extdata", "MixedConifer.laz", package = "lidR")
+trees <- readLAS(LASfile, filter = "-drop_z_below 0")
+
+# plot(trees) to view the point cloud data in 3D
+
+# make some fake plots:
+tree_crs <- st_crs(trees)
+trees_bbox <- lidR::st_bbox(trees) |>
+  sf::st_as_sfc()
+trees_cent <- st_centroid(trees_bbox)
+plot_max_ext <- (trees_bbox - trees_cent) * 0.75 + trees_cent
+fake_plots <- sf::st_sample(x = plot_max_ext, size = 9, type = "regular") |>
+  sf::st_buffer(5) |>
+  sf::st_set_crs(tree_crs)
+
+plot(fake_plots, col = "#cc4040c9")
+```
+
+The `compute_pixel_metrics` function is a wrapper around 
+`lidR::pixel_metrics` that generates 40 metrics from the point cloud data and 
+saves them to a raster file. 
+
+```{r warning=FALSE}
+# This uses the `compute_pixel_metrics` which is a wrapper around
+# `lidR::pixel_metrics`. It generates 40 rastersied metrics from the
+# point cloud data.
+gridded_metrics <- compute_pixel_metrics(
+  trees,
+  res = 2,
+  output_filename = "grid_metrics.tif"
+)
+gm <- terra::rast(gridded_metrics)
+print(names(gm))
+plot(gm[[1:12]], col = hcl.colors(100, "viridis"))
+```
+
+The `compute_plot_metrics` function is a wrapper around `lidR::plot_metrics` 
+that generates metrics for a set of polygons. The `rh_preds` function is a 
+reduced/modified version of the `lidar_preds` function in the "lidar-metrics.R" 
+script that can be used with `lidR::plot_metrics` to generate relative height 
+metrics at 1 percentile intervals.
+```{r warning=FALSE}
+# now to extract metrics for these plots we use `compute`
+plot_metrics_sf <- compute_plot_metrics(trees, geometry = fake_plots) |>
+  sf::st_as_sf()
+print(plot_metrics_sf)
+
+# or if you just want relative height metrics at 1 percentile intervals you
+# can use:
+rh_mets_sf <- lidR::plot_metrics(
+  trees,
+  func = rh_preds(Z),
+  geometry = fake_plots
+) |>
+  sf::st_as_sf()
+print(rh_mets_sf)
+# the rh_preds function is just a reduced/modified version of the lidar_preds
+# these examples should demonstrate how to build any custom functions that
+# can be used with `lidR::plot_metrics` or `lidR::pixel_metrics`
+
+
+plot(gm[[2]], col = hcl.colors(100, "viridis"))
+plot(rh_mets_sf["rh99"], add = TRUE, key.pos = 1, axes = TRUE, axes = TRUE)
+```
+
